@@ -4530,6 +4530,8 @@ class Makera(RelativeLayout):
 
             if(sumfile != sumdata):
                 logger.error(f"deCompress failed: sum checksum mismatch")
+                if os.path.exists(output_filename):
+                    os.remove(output_filename)
                 return False
 
             logger.info(f"deCompress completed. deCompressed file saved as '{output_filename}'.")
