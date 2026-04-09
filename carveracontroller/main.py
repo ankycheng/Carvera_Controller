@@ -4065,10 +4065,33 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def finishLoadConfig(self, success, *args):
+        # Stage 1: prepare config_path. Decompress if the firmware sent the file
+        # quicklz-compressed (mirrors the pattern in load_gcode_file() for G-code).
+        # Any failure here flips `success` so the shared cleanup tail still runs.
+        config_path = None
+        if success:
+            config_path = os.path.join(self.temp_dir, 'config.txt')
+            try:
+                with open(config_path, 'rb') as f:
+                    first_two_bytes = f.read(2)
+            except OSError as e:
+                logger.error(f"Failed to open downloaded config.txt: {e}")
+                success = False
+            else:
+                if first_two_bytes == b'\x00\x00':  # quicklz magic
+                    lzdir, filename = os.path.split(config_path)
+                    lzdir = os.path.join(lzdir, ".lz")
+                    if not os.path.exists(lzdir):
+                        os.makedirs(lzdir)
+                    lzpath = os.path.join(lzdir, filename + ".lz")
+                    shutil.copyfile(config_path, lzpath)
+                    if not self.decompress_file(lzpath, config_path):
+                        logger.error("Failed to decompress config.txt")
+                        success = False
+
+        # Stage 2: parse the (now plain-text) config into setting_list.
         if success:
             self.setting_list.clear()
-            # caching config file
-            config_path = os.path.join(self.temp_dir, 'config.txt')
             with open(config_path, 'r') as f:
                 config_string = '[dummy_section]\n' + f.read()
             # remove notes
@@ -4090,11 +4113,16 @@ class Makera(RelativeLayout):
             self.setting_change_list = {}
 
             self.config_loaded = self.load_machine_config()
-            self.config_loading = False
             self.config_popup.btn_apply.disabled = True if len(self.setting_change_list) == 0 else False
         else:
             self.controller.log.put(Controller.MSG_ERROR, tr._('Download config file error'))
             #self.controller.close()
+
+        # Always clear the loading flag so the UI reflects the final state, even
+        # on download / decompression / parse failure. The original code only
+        # cleared it on the happy path, which left sync stuck "in progress"
+        # until reconnect.
+        self.config_loading = False
 
         # Preserve selected file only when reconnecting to the same machine.
         # finishLoadConfig() can be called on reconnect; resume-at-line depends on
